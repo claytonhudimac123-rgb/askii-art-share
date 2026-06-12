@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Global ASCII Studio Hub</title>
+    <style>
+        :root {
+            --bg-dark: #0f0f11;
+            --panel-dark: #18181c;
+            --accent-blue: #3b82f6;
+            --text-main: #f3f4f6;
+        }
+        body {
+            margin: 0;
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            padding: 24px;
+        }
+        header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+        header h1 {
+            font-size: 2.5rem;
+            margin: 0 0 10px 0;
+            color: var(--accent-blue);
+            font-weight: 800;
+            letter-spacing: -0.05em;
+        }
+        .gallery-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 24px;
+            max-width: 1300px;
+            margin: 0 auto;
+        }
+        .art-card {
+            background-color: var(--panel-dark);
+            border: 1px solid #27272a;
+            border-radius: 12px;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            transition: transform 0.2s;
+        }
+        .art-card:hover {
+            transform: translateY(-2px);
+        }
+        .canvas-container {
+            background-color: #000000;
+            border-radius: 8px;
+            width: 100%;
+            height: 220px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+        .canvas-container canvas {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+        .card-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .btn {
+            background-color: var(--accent-blue);
+            color: white;
+            border: none;
+            padding: 10px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 14px;
+            text-align: center;
+        }
+        .btn:hover { background-color: #2563eb; }
+        
+        #full-view-pane {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        .action-row {
+            width: 100%;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .master-canvas-holder {
+            background-color: #000;
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid #27272a;
+            max-width: 100%;
+            overflow: auto;
+        }
+        .master-canvas-holder canvas {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="gallery-pane">
+        <header>
+            <h1>🌌 Community ASCII Feed</h1>
+            <p>High-fidelity structural canvas renders from global submissions</p>
+        </header>
+        <div class="gallery-grid" id="gallery-container"></div>
+    </div>
+
+    <div id="full-view-pane">
+        <div class="action-row">
+            <button class="btn" onclick="returnToGallery()">← Back to Gallery</button>
+            <button class="btn" id="dl-master-btn" style="background-color: #10b981;">Download Native PNG</button>
+        </div>
+        <div class="master-canvas-holder">
+            <canvas id="view-canvas"></canvas>
+        </div>
+    </div>
+
+    <script>
+        window.addEventListener('DOMContentLoaded', () => {
+            const payloadHash = window.location.hash.substring(1);
+            if (payloadHash && payloadHash.startsWith('view_')) {
+                initSingleFullView(payloadHash);
+            } else {
+                initGalleryView(payloadHash);
+            }
+        });
+
+        function decodeSafeBase64(base64str) {
+            let base64 = base64str.replace(/-/g, '+').replace(/_/g, '/');
+            while (base64.length % 4) { base64 += '='; }
+            try { return decodeURIComponent(escape(atob(base64))); } catch (e) { return atob(base64); }
+        }
+
+        function drawAsciiToCanvas(canvasElement, asciiText) {
+            if (!asciiText) return;
+            const rows = asciiText.split('\n').filter(r => r.trim().length > 0);
+            if(rows.length === 0) return;
+            
+            const maxCols = Math.max(...rows.map(r => r.length));
+            const charW = 8;
+            const charH = 14;
+            
+            canvasElement.width = maxCols * charW;
+            canvasElement.height = rows.length * charH;
+            
+            const ctx = canvasElement.getContext('2d');
+            ctx.fillStyle = "#121212";
+            ctx.fillRect(0, 0, canvasElement.width, canvasElement.height);
+            
+            ctx.fillStyle = "#ffffff";
+            ctx.font = "bold 12px 'Courier New', Courier, monospace";
+            ctx.textBaseline = "top";
+            
+            rows.forEach((line, index) => {
+                ctx.fillText(line, 0, index * charH);
+            });
+        }
+
+        async function initGalleryView(currentHash) {
+            document.getElementById('gallery-pane').style.display = 'block';
+            document.getElementById('full-view-pane').style.display = 'none';
+            
+            const container = document.getElementById('gallery-container');
+            container.innerHTML = '<p style="text-align:center; grid-column:1/-1;">Loading folder collection...</p>';
+            
+            let activeDataset = [];
+
+            // 1. Direct Share Link Check
+            if (currentHash && currentHash.startsWith('view_')) {
+                try {
+                    const parsedText = decodeSafeBase64(currentHash.replace('view_', ''));
+                    activeDataset.push({ id: "Direct Shared Preview", data: parsedText, rawHash: currentHash });
+                } catch(e) { console.error(e); }
+            }
+
+            // 2. Fetch images directly from the local folder index
+            try {
+                const response = await fetch(`art/manifest.json?t=${Date.now()}`);
+                const manifest = await response.json();
+                
+                if(Array.isArray(manifest)) {
+                    // Pull newest items first
+                    for (let item of manifest.reverse()) {
+                        const textRes = await fetch(`art/${item.filename}`);
+                        const asciiContent = await textRes.text();
+                        
+                        activeDataset.push({
+                            id: item.title,
+                            data: asciiContent,
+                            rawHash: 'view_' + btoa(unescape(encodeURIComponent(asciiContent))).replace(/\+/g, '-').replace(/\//g, '_')
+                        });
+                    }
+                }
+            } catch (err) { 
+                console.log("No directory manifest found yet or waiting for first upload."); 
+            }
+
+            if (activeDataset.length === 0) {
+                container.innerHTML = '<p style="color:#a1a1aa; text-align:center; grid-column:1/-1;">Folder empty. Convert and publish art using your updated Python app!</p>';
+                return;
+            }
+
+            container.innerHTML = '';
+            activeDataset.forEach((item, index) => {
+                const card = document.createElement('div');
+                card.className = 'art-card';
+                card.innerHTML = `
+                    <div class="canvas-container">
+                        <canvas id="canvas_${index}"></canvas>
+                    </div>
+                    <div class="card-meta">
+                        <span style="font-weight:600; color:#a1a1aa;">${item.id}</span>
+                        <a href="#${item.rawHash}" class="btn" onclick="setTimeout(()=>location.reload(),10)">View Full</a>
+                    </div>
+                `;
+                container.appendChild(card);
+                drawAsciiToCanvas(document.getElementById(`canvas_${index}`), item.data);
+            });
+        }
+
+        function initSingleFullView(hashPayload) {
+            const targetString = hashPayload.replace('view_', '');
+            document.getElementById('gallery-pane').style.display = 'none';
+            document.getElementById('full-view-pane').style.display = 'flex';
+            
+            try {
+                const plainAscii = decodeSafeBase64(targetString);
+                const viewCanvas = document.getElementById('view-canvas');
+                drawAsciiToCanvas(viewCanvas, plainAscii);
+                
+                document.getElementById('dl-master-btn').onclick = () => {
+                    const downloadAnchor = document.createElement('a');
+                    downloadAnchor.download = `ascii_${Date.now()}.png`;
+                    downloadAnchor.href = viewCanvas.toDataURL('image/png');
+                    downloadAnchor.click();
+                };
+            } catch(e) {
+                alert("Error rendering full view.");
+                returnToGallery();
+            }
+        }
+
+        function returnToGallery() {
+            window.location.hash = '';
+            location.reload();
+        }
+    </script>
+</body>
+</html>
